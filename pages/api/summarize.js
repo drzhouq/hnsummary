@@ -1,77 +1,71 @@
+import { Configuration, OpenAIApi } from 'openai';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
-import { Configuration, OpenAIApi } from 'openai';
+import { createClient } from 'redis';
 
 const config = new Configuration({
   apiKey: process.env.OPENAI_KEY,
 });
 const openai = new OpenAIApi(config);
 
-export default async function handler(req, res) {
-//  console.log('Received request with query:', req.query);
- // console.log(config);
+// Initialize Redis client
+const getRedisClient = async () => {
+  const client = createClient({
+    url: process.env.REDIS_URL || process.env.KV_REST_API_URL,
+    password: process.env.REDIS_PASSWORD || process.env.KV_REST_API_TOKEN,
+  });
+  await client.connect();
+  return client;
+};
 
-  const { id } = req.query;
-  if (!id) {
-    console.error('Missing Hacker News ID');
-    return res.status(400).json({ error: 'Missing Hacker News ID' });
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  let redis;
   try {
-    //console.log('Fetching HN data for ID:', id);
-    const hnRes = await fetch(`https://hn.algolia.com/api/v1/items/${id}`);
-    if (!hnRes.ok) {
-      console.error('Failed to fetch HN data:', hnRes.status, hnRes.statusText);
-      return res.status(500).json({ error: 'Failed to fetch HN data' });
+    const { articleUrl, comments, hnId } = req.body;
+
+    if (!hnId) {
+      return res.status(400).json({ error: 'HN ID is required' });
     }
 
-    const hnData = await hnRes.json();
-    //console.log('Fetched HN data:', hnData);
+    // Initialize Redis connection first
+    redis = await createClient({ 
+      url: process.env.REDIS_URL || process.env.KV_REST_API_URL,
+      password: process.env.REDIS_PASSWORD || process.env.KV_REST_API_TOKEN,
+    }).connect();
 
+    // Check cache first before doing any other operations
+    const cached = await redis.get(`summary:${hnId}`);
+    if (cached) {
+      await redis.quit();
+      return res.status(200).json({ summary: cached, fromCache: true });
+    }
+
+    // If not in cache, proceed with fetching and summarizing
     let articleText = '';
-    if (hnData.url) {
-      //console.log('Fetching article content from:', hnData.url);
-      const articleRes = await fetch(hnData.url);
-      if (!articleRes.ok) {
-        console.error('Failed to fetch article content:', articleRes.status, articleRes.statusText);
-        return res.status(500).json({ error: 'Failed to fetch article content' });
-      }
-
-      const html = await articleRes.text();
-      const dom = new JSDOM(html);
-      const reader = new Readability(dom.window.document);
-      articleText = reader.parse()?.textContent || '';
-      //console.log('Extracted article content:', articleText.substring(0, 100) + '...');
-    }
-
-    const comments = [];
-    const urlRegex = /https?:\/\/[^\s]+/g;
-    const urls = new Map();
-
-    function processComments(children) {
-      children.forEach(child => {
-        if (child.text) {
-          const text = `${child.author}: ${child.text}`;
-          comments.push(text);
-          
-          const matches = child.text.match(urlRegex) || [];
-          matches.forEach(url => {
-            const cleanUrl = url.replace(/[.,]+$/, '');
-            urls.set(cleanUrl, urls.get(cleanUrl)?.add(child.author) || new Set([child.author]));
-          });
+    if (articleUrl) {
+      try {
+        const articleRes = await fetch(articleUrl);
+        if (articleRes.ok) {
+          const html = await articleRes.text();
+          const dom = new JSDOM(html);
+          const reader = new Readability(dom.window.document);
+          articleText = reader.parse()?.textContent || '';
         }
-        if (child.children) processComments(child.children);
-      });
+      } catch (error) {
+        console.error('Error fetching article:', error);
+        // Continue with empty article text if fetch fails
+      }
     }
-
-    processComments(hnData.children);
-    //console.log('Processed comments:', comments.length);
 
     const prompt = `Summarize the Hacker News submission:
     
     Article: ${articleText.substring(0, 6000)}
     
-    Comments: ${comments.join('\n').substring(0, 3000)}
+    Comments: ${comments}
     
     Include:
     - 3 paragraph article summary
@@ -79,7 +73,6 @@ export default async function handler(req, res) {
     - Direct quotes with attribution
     - All mentioned URLs as markdown links`;
 
-    console.log('Sending prompt to OpenAI:', prompt.substring(0, 100) + '...');
     const gptResponse = await openai.createChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -87,14 +80,31 @@ export default async function handler(req, res) {
       max_tokens: 9500
     });
 
-    console.log('Received response from OpenAI');
-    //console.log(gptResponse.data.choices[0].message); 
+    const summary = gptResponse.data.choices[0].message.content;
+
+    // Cache the summary if we have an HN ID
+    if (hnId) {
+      await redis.set(`summary:${hnId}`, summary);
+      await redis.set(`summary:${hnId}:savedAt`, new Date().toISOString());
+      // Set expiration to 30 days
+      await redis.expire(`summary:${hnId}`, 60 * 60 * 24 * 30);
+      await redis.expire(`summary:${hnId}:savedAt`, 60 * 60 * 24 * 30);
+    }
+
+    // Close Redis connection
+    await redis.quit();
+
     res.status(200).json({
-      summary: gptResponse.data.choices[0].message.content
+      summary,
+      fromCache: false
     });
 
   } catch (error) {
     console.error('Error in summarize API:', error);
+    // Ensure Redis connection is closed even if there's an error
+    if (redis) {
+      await redis.quit();
+    }
     res.status(500).json({
       error: error.message
     });
