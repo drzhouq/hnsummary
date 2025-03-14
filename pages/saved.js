@@ -168,14 +168,29 @@ export default function SavedSummaries() {
             .map((item) => (
             <div key={item.id} className="summary-card">
               <div className="summary-header">
-                <Link 
-                  href={`https://news.ycombinator.com/item?id=${item.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hn-link"
-                >
-                  HN Discussion #{item.id}
-                </Link>
+                <div className="links">
+                  <Link 
+                    href={`https://news.ycombinator.com/item?id=${item.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hn-link"
+                  >
+                    HN Discussion
+                  </Link>
+                  {item.articleUrl && (
+                    <>
+                      <span className="link-separator">•</span>
+                      <Link 
+                        href={item.articleUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="article-link"
+                      >
+                        Original Article
+                      </Link>
+                    </>
+                  )}
+                </div>
                 <span className="date">
                   {new Date(item.savedAt).toLocaleDateString()}
                 </span>
@@ -310,11 +325,20 @@ export default function SavedSummaries() {
           align-items: center;
           margin-bottom: 1rem;
         }
-        .hn-link {
-          color: #ff6600;
-          text-decoration: none;
+        .links {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
         }
-        .hn-link:hover {
+        .link-separator {
+          color: #666;
+        }
+        .hn-link, .article-link {
+          color: #0369a1;
+          text-decoration: none;
+          font-size: 0.9rem;
+        }
+        .hn-link:hover, .article-link:hover {
           text-decoration: underline;
         }
         .date {

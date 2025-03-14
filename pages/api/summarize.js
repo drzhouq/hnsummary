@@ -94,6 +94,10 @@ export default async function handler(req, res) {
       await redis.set(`summary:${hnId}`, summary);
       await redis.set(`summary:${hnId}:keywords`, JSON.stringify(keywords));
       await redis.set(`summary:${hnId}:savedAt`, new Date().toISOString());
+      if (articleUrl) {
+        await redis.set(`summary:${hnId}:articleUrl`, articleUrl);
+        await redis.expire(`summary:${hnId}:articleUrl`, 60 * 60 * 24 * 30);
+      }
       // Set expiration to 30 days
       await redis.expire(`summary:${hnId}`, 60 * 60 * 24 * 30);
       await redis.expire(`summary:${hnId}:keywords`, 60 * 60 * 24 * 30);

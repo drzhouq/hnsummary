@@ -22,6 +22,7 @@ export default async function handler(req, res) {
         const summary = await redis.get(key);
         const hnId = key.split(':')[1];
         const keywords = JSON.parse(await redis.get(`summary:${hnId}:keywords`) || '[]');
+        const articleUrl = await redis.get(`summary:${hnId}:articleUrl`);
         
         // Only include entries that have actual summary content
         if (!summary || summary.startsWith('[') || summary.trim() === '') {
@@ -32,6 +33,7 @@ export default async function handler(req, res) {
           id: hnId,
           summary,
           keywords,
+          articleUrl,
           savedAt: await redis.get(`summary:${hnId}:savedAt`) || new Date().toISOString()
         };
       })
