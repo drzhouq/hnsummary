@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     }).connect();
 
     // Get all keys matching the summary pattern, excluding timestamp keys
-    const keys = (await redis.keys('summary:*')).filter(key => !key.endsWith(':savedAt'));
+    const keys = (await redis.keys('summary:*')).filter(key => !key.endsWith(':savedAt') && !key.endsWith(':keywords'));
     
     // Get all summaries in parallel
     const summaries = await Promise.all(
@@ -22,6 +22,12 @@ export default async function handler(req, res) {
         const summary = await redis.get(key);
         const hnId = key.split(':')[1];
         const keywords = JSON.parse(await redis.get(`summary:${hnId}:keywords`) || '[]');
+        
+        // Only include entries that have actual summary content
+        if (!summary || summary.startsWith('[') || summary.trim() === '') {
+          return null;
+        }
+        
         return {
           id: hnId,
           summary,
@@ -32,7 +38,9 @@ export default async function handler(req, res) {
     );
 
     await redis.quit();
-    res.status(200).json({ summaries });
+    res.status(200).json({ 
+      summaries: summaries.filter(Boolean) // Remove null entries
+    });
   } catch (error) {
     console.error('Error fetching saved summaries:', error);
     if (redis) {

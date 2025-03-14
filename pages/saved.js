@@ -187,9 +187,10 @@ export default function SavedSummaries() {
                   ))}
                 </div>
               )}
-              <div className="summary prose" 
+              <div 
+                className="summary prose" 
                 dangerouslySetInnerHTML={{ 
-                  __html: marked.parse(item.summary) 
+                  __html: marked.parse(item.summary || '') 
                 }} 
               />
             </div>
