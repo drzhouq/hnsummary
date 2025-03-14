@@ -67,7 +67,9 @@ export default async function handler(req, res) {
     
     Comments: ${comments}
     
-    Include:
+    Please provide:
+    1. Keywords/Tags (5-7 relevant keywords separated by commas)
+    2. Summary:
     - 3 paragraph article summary
     - Key discussion themes with markdown headers
     - Direct quotes with attribution
@@ -80,14 +82,21 @@ export default async function handler(req, res) {
       max_tokens: 9500
     });
 
-    const summary = gptResponse.data.choices[0].message.content;
+    const response = gptResponse.data.choices[0].message.content;
+    
+    // Extract keywords and summary
+    const [keywordsSection, ...rest] = response.split('\n\n');
+    const keywords = keywordsSection.replace(/^.*?:/, '').trim().split(',').map(k => k.trim());
+    const summary = rest.join('\n\n');
 
-    // Cache the summary if we have an HN ID
+    // Cache the summary and keywords if we have an HN ID
     if (hnId) {
       await redis.set(`summary:${hnId}`, summary);
+      await redis.set(`summary:${hnId}:keywords`, JSON.stringify(keywords));
       await redis.set(`summary:${hnId}:savedAt`, new Date().toISOString());
       // Set expiration to 30 days
       await redis.expire(`summary:${hnId}`, 60 * 60 * 24 * 30);
+      await redis.expire(`summary:${hnId}:keywords`, 60 * 60 * 24 * 30);
       await redis.expire(`summary:${hnId}:savedAt`, 60 * 60 * 24 * 30);
     }
 
@@ -96,6 +105,7 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       summary,
+      keywords,
       fromCache: false
     });
 
